@@ -8,6 +8,7 @@ edition = "2018"
 cfb = "0.6"
 uuid = "0.8"
 serde = { version = "1", features = ["derive"] }
+crc = "2"
+chrono = "0.4"
 
 [dev-dependencies]
-crc = "2"

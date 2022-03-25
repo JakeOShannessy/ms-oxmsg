@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     convert::TryInto,
-    io::{Read, Seek},
+    io::{Read, Seek, Write},
     path::Path,
 };
 use uuid::Uuid;
@@ -404,7 +404,7 @@ mod tests {
         // We will read the whole email into memory for safety. By reading the
         // whole thing into memory, we know that the library can't make any
         // modifications to it.
-        let mut file = std::fs::File::open("troublesome_email.msg").unwrap();
+        let mut file = std::fs::File::open("test_email.msg").unwrap();
         // Read that file into a buffer.
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
@@ -453,6 +453,10 @@ mod tests {
         // for (i, recipient) in recipients.into_iter().enumerate() {
         //     println!("Recipients[{}]: {}", i, recipient.address);
         // }
+        for e in comp.walk() {
+            println!("entry[{}]: {:?}", e.is_storage(), e.path());
+            // e.
+        }
 
         let string_stream = {
             let mut stream = comp
@@ -495,11 +499,34 @@ mod tests {
             };
             read(&buffer).unwrap()
         };
+        let body = {
+            // let mut stream = comp.open_stream("/__substg1.0_3FFA001F")?;
+            let mut stream = comp.open_stream("/__substg1.0_1000001F").unwrap();
+            let buffer = {
+                let mut buffer = Vec::new();
+                stream.read_to_end(&mut buffer).unwrap();
+                buffer
+            };
+            read(&buffer).ok()
+        };
+        // let creation_time = {
+        //     // let mut stream = comp.open_stream("/__substg1.0_3FFA001F")?;
+        //     let mut stream = comp.open_stream("/__properties_version1.0").unwrap();
+        //     let buffer = {
+        //         let mut buffer = Vec::new();
+        //         stream.read_to_end(&mut buffer).unwrap();
+        //         buffer
+        //     };
+        //     buffer
+        //     // read(&buffer).unwrap()
+        // };
+        // panic!("creation_time: {:?}",String::from_utf8_lossy(&creation_time));
         let message = Message {
             string_stream,
             guid_stream,
             subject,
             sender,
+            // body,
         };
 
         // let root_entry = comp.root_entry();
@@ -519,14 +546,14 @@ mod tests {
                 buffer
             };
             if s.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00040102" {
+                let len = data.len();
+                println!("StringStream, len = {len}");
                 let mut data_slice = data.as_slice();
                 let mut n = 0;
                 loop {
                     if data_slice.is_empty() {
                         break;
                     }
-
-                    println!("Stream Length: {}", data_slice.len());
                     let length = u32::from_le_bytes([
                         data_slice[0],
                         data_slice[1],
@@ -539,14 +566,14 @@ mod tests {
                         break;
                     }
                     data_slice = &data_slice[4..];
-                    print!("StringEntry[{}]({})", n, length);
+                    print!("    StringEntry[{}]({})", n, length);
                     std::io::stdout().flush().unwrap();
                     if let Ok(recip0) = read(&data_slice[0..length]) {
                         print!(": {}", recip0);
                     }
                     println!();
                     let next_offset = length + length % 4;
-                    println!("next_offset: {}", next_offset);
+                    // println!("next_offset: {}", next_offset);
                     if next_offset > data_slice.len() {
                         break;
                     }
@@ -554,76 +581,12 @@ mod tests {
                     n += 1;
                 }
             } else if s.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00030102" {
-                let mut data_slice = data.as_slice();
-                let mut n = 0;
-                loop {
-                    println!(
-                        "{:02X} {:02X} {:02X} {:02X}",
-                        data_slice[0], data_slice[1], data_slice[2], data_slice[3]
-                    );
-                    println!(
-                        "{:02X} {:02X} {:02X} {:02X}",
-                        data_slice[4], data_slice[5], data_slice[6], data_slice[7]
-                    );
-                    let property_index = u16::from_le_bytes([data_slice[6], data_slice[7]]);
-                    let guid_index =
-                        GuidIndex::new(u16::from_le_bytes([data_slice[4], data_slice[5]]) >> 1);
-                    let property_kind: PropertyKind = if data_slice[4] & 0x1 == 1 {
-                        PropertyKind::String
-                    } else {
-                        PropertyKind::Numerical
-                    };
-                    let identifier = match property_kind {
-                        PropertyKind::Numerical => PropertyId::Number(u32::from_le_bytes([
-                            data_slice[0],
-                            data_slice[1],
-                            data_slice[2],
-                            data_slice[3],
-                        ])),
-                        PropertyKind::String => {
-                            let num = u32::from_le_bytes([
-                                data_slice[0],
-                                data_slice[1],
-                                data_slice[2],
-                                data_slice[3],
-                            ]);
-                            println!("String Index: {}", num);
-                            PropertyId::String(message.string_stream.get(num as usize).unwrap())
-                        }
-                    };
-                    print!(
-                        "PropertyEntry[{}]: Kind: {:?} Id: {:?} PropertyIndex: {} GUID Index: {:?}",
-                        n, property_kind, identifier, property_index, guid_index
-                    );
-                    std::io::stdout().flush().unwrap();
-                    if let GuidIndex::StreamIndex(index) = guid_index {
-                        let guid = message.guid_stream.get(index as usize);
-                        print!(" GUID: {:?}", guid);
-                    }
-                    std::io::stdout().flush().unwrap();
-                    println!();
-                    let stream_id = match identifier {
-                        PropertyId::Number(n) => {
-                            0x1000 + ((n as u16) ^ (guid_index.as_num() << 1)) % 0x1F
-                        }
-                        PropertyId::String(_s) => {
-                            let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-                            let mut digest = crc.digest();
-                            digest.update(&data_slice[0..=3]);
-                            let checksum = digest.finalize();
-                            0x1000 + ((checksum as u16) ^ (guid_index.as_num() << 1 | 1)) % 0x1F
-                        }
-                    };
-                    let hex_id: u32 = ((stream_id as u32) << 16) | 0x00000102;
-                    let stream_name = format!("__substg1.0_{:X}", hex_id);
-                    println!("stream_name: {}", stream_name);
-                    data_slice = &data_slice[8..];
-                    if data_slice.is_empty() {
-                        break;
-                    }
-                    n += 1;
-                }
+                let len = data.len();
+                println!("EntryStream, len = {len}");
+                let entry = parse_property(&message, data.as_slice());
             } else if s.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00020102" {
+                let len = data.len();
+                println!("GuidStream, len = {len}");
                 let mut data_slice = data.as_slice();
                 let mut n = 0;
                 loop {
@@ -631,19 +594,66 @@ mod tests {
                         break;
                     }
                     let guid: Uuid = parse_guid(data_slice);
-                    println!("GUID[{}]: {}", n, guid);
+                    println!("    GUID[{}]: {}", n, guid);
                     data_slice = &data_slice[16..];
                     n += 1;
                 }
             } else if s.path().as_os_str() == "/__attach_version1.0_#00000000\\__substg1.0_3001001F"
             {
-                print!("Stream[{}]({})", i, data.len());
+                print!("Stream[{}]({})[{}]", i, data.len(), s.path().display());
                 if let Ok(recip0) = read(&data) {
                     print!(": ATTACHMENT: {}", recip0);
                 }
                 println!();
+            } else if s.path().starts_with("/__nameid_version1.0") {
+                let len = data.len();
+                let name = s.name();
+                // println!("named property mapping (len = {len}): {name} - {identifier:?} - {index_kind:?}");
+                println!("NamedPropertyMapping (len = {len}): {name}");
+                let mut data_slice = data.as_slice();
+                let mut n = 0;
+                loop {
+                    if data_slice.is_empty() {
+                        break;
+                    }
+                    // let guid: Uuid = parse_guid(data_slice);
+                    let id_num = u32::from_le_bytes([
+                        data_slice[0],
+                        data_slice[1],
+                        data_slice[2],
+                        data_slice[3],
+                    ]);
+                    let kind_num = parse_kind_index([
+                        data_slice[4],
+                        data_slice[5],
+                        data_slice[6],
+                        data_slice[7],
+                    ]);
+                    println!(
+                        "    [{n}]: id/crc: {:?}/{id_num} index/kind: {:?}/{kind_num:?}",
+                        &data_slice[0..4],
+                        &data_slice[4..8]
+                    );
+                    match kind_num {
+                        (property_index, guid_index, PropertyKind::String) => {
+                            // let name = message.string_stream.get(property_index as usize).unwrap();
+                            let name = "test";
+                            println!("    [{n}]: name: {name} id_num: {id_num} {kind_num:?}",);
+                        }
+                        (property_index, guid_index, PropertyKind::Numerical) => {
+                            println!(
+                                "    [{n}]: index: {property_index} id_num: {id_num} {kind_num:?}",
+                            );
+                        }
+                    }
+                    data_slice = &data_slice[8..];
+                    n += 1;
+                }
+            } else if s.path().as_os_str() == "/__properties_version1.0" {
+                println!("other properties");
+                parse_property_stream_top_level(&message, &data);
             } else {
-                print!("Stream[{}]({})", i, data.len());
+                print!("Stream[{}]({})[{}]", i, data.len(), s.path().display());
                 if let Ok(recip0) = read(&data) {
                     print!(": {}", recip0);
                 }
@@ -653,6 +663,9 @@ mod tests {
         }
         println!("Subject: {}", message.subject);
         println!("Sender: {}", message.sender);
+        if let Some(body) = body {
+            println!("Body: {}", body);
+        }
 
         // // Append that data to the end of another stream in the same file.
         // {
@@ -676,4 +689,195 @@ mod tests {
             println!("{}", s);
         }
     }
+}
+
+pub struct Property {
+    kind: PropertyKind,
+    id: PropertyId,
+}
+type PropertyIndex = u16;
+fn parse_kind_index(data: [u8; 4]) -> (PropertyIndex, GuidIndex, PropertyKind) {
+    let property_kind: PropertyKind = if data[0] & 0x1 == 1 {
+        PropertyKind::String
+    } else {
+        PropertyKind::Numerical
+    };
+    let property_index = u16::from_le_bytes([data[2], data[3]]);
+    let guid_index = GuidIndex::new(u16::from_le_bytes([data[0], data[1]]) >> 1);
+    (property_index, guid_index, property_kind)
+}
+
+fn parse_property(message: &Message, data_slice: &[u8]) {
+    let mut data_slice = data_slice;
+    let mut n = 0;
+    loop {
+        let (property_index, guid_index, property_kind) =
+            parse_kind_index([data_slice[4], data_slice[5], data_slice[6], data_slice[7]]);
+
+        let identifier = match property_kind {
+            PropertyKind::Numerical => PropertyId::Number(u32::from_le_bytes([
+                data_slice[0],
+                data_slice[1],
+                data_slice[2],
+                data_slice[3],
+            ])),
+            PropertyKind::String => {
+                let num = u32::from_le_bytes([
+                    data_slice[0],
+                    data_slice[1],
+                    data_slice[2],
+                    data_slice[3],
+                ]);
+                // println!("        String Index: {}", num);
+                PropertyId::String(message.string_stream.get(num as usize).unwrap())
+            }
+        };
+        println!("    PropertyEntry[{n}][{property_index}]: Id: {identifier:?} PropertyIndex: {property_index} GuidIndex: {guid_index:?}");
+        println!(
+            "        {:02X} {:02X} {:02X} {:02X}",
+            data_slice[0], data_slice[1], data_slice[2], data_slice[3]
+        );
+        println!(
+            "        {:02X} {:02X} {:02X} {:02X}",
+            data_slice[4], data_slice[5], data_slice[6], data_slice[7]
+        );
+        std::io::stdout().flush().unwrap();
+        if let GuidIndex::StreamIndex(index) = guid_index {
+            let guid = message.guid_stream.get(index as usize);
+            print!("        GUID: {:?}", guid);
+        }
+        std::io::stdout().flush().unwrap();
+        println!();
+        let stream_id = match identifier {
+            PropertyId::Number(n) => 0x1000 + ((n as u16) ^ (guid_index.as_num() << 1)) % 0x1F,
+            PropertyId::String(_s) => {
+                let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+                let mut digest = crc.digest();
+                digest.update(&data_slice[0..=3]);
+                let checksum = digest.finalize();
+                0x1000 + ((checksum as u16) ^ (guid_index.as_num() << 1 | 1)) % 0x1F
+            }
+        };
+        let hex_id: u32 = ((stream_id as u32) << 16) | 0x00000102;
+        let stream_name = format!("__substg1.0_{:X}", hex_id);
+        println!("        stream_name: {}", stream_name);
+        data_slice = &data_slice[8..];
+        if data_slice.is_empty() {
+            break;
+        }
+        n += 1;
+    }
+}
+
+// PidTagMessageDeliveryTime: 0x0E06
+// PidTagSenderEmailAddress: 0x0C1F
+// PidTagClientSubmitTime: 0x0039
+
+fn parse_property_stream_top_level(message: &Message, data_slice: &[u8]) {
+    let mut data_slice = data_slice;
+    // Ignore the first 8 bytes as required by spec.
+    let _reserved1 = &data_slice[0..8];
+    let next_recipient_id = &data_slice[8..12];
+    let next_attachment_id = &data_slice[12..16];
+    let recipient_count = &data_slice[16..20];
+    let attachment_count = &data_slice[20..24];
+    let _reserved2 = &data_slice[24..32];
+    data_slice = &data_slice[32..];
+    let mut n = 0;
+    loop {
+        // let property_tag = &data_slice[0..4];
+        let property_tag = u16::from_le_bytes([data_slice[0], data_slice[1]]);
+        let property_id = u16::from_le_bytes([data_slice[2], data_slice[3]]);
+        let flags =
+            u32::from_le_bytes([data_slice[4], data_slice[5], data_slice[6], data_slice[7]]);
+        let value = &data_slice[8..16];
+        eprint!("property_id: 0x{:04X}", property_id);
+        eprint!(" property_tag: 0x{:04X}", property_tag);
+        eprint!(" flags: 0x{:08X}", flags);
+        eprint!(
+            " value: 0x{:02X}{:02X}{:02X}{:02X}",
+            value[3], value[2], value[1], value[0]
+        );
+        if property_tag == 0x040 {
+            // parse time
+            let nano_100s = i64::from_le_bytes([
+                value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7],
+            ]);
+            eprint!(" time: {nano_100s}");
+            let origin_seconds = chrono::NaiveDate::from_ymd(1970, 1, 1)
+                .and_hms_milli(0, 0, 0, 0)
+                .timestamp()
+                - chrono::NaiveDate::from_ymd(1601, 1, 1)
+                    .and_hms_milli(0, 0, 0, 0)
+                    .timestamp();
+            let time_seconds = nano_100s / 10 / 1000 / 1000 - origin_seconds;
+
+            eprint!(" time seconds: {time_seconds} s");
+            // let time = chrono::NaiveDateTime::from_timestamp(time_seconds, 0);
+            // eprint!(" time: {time}");
+        }
+        eprintln!();
+
+        // let v = parse_fixed_length_pv(&value);
+        // let (property_index, guid_index, property_kind) =
+        //     parse_kind_index([data_slice[4], data_slice[5], data_slice[6], data_slice[7]]);
+
+        // let identifier = match property_kind {
+        //     PropertyKind::Numerical => PropertyId::Number(u32::from_le_bytes([
+        //         data_slice[0],
+        //         data_slice[1],
+        //         data_slice[2],
+        //         data_slice[3],
+        //     ])),
+        //     PropertyKind::String => {
+        //         let num = u32::from_le_bytes([
+        //             data_slice[0],
+        //             data_slice[1],
+        //             data_slice[2],
+        //             data_slice[3],
+        //         ]);
+        //         // println!("        String Index: {}", num);
+        //         PropertyId::String(message.string_stream.get(num as usize).unwrap())
+        //     }
+        // };
+        // println!("    PropertyEntry[{n}][{property_index}]: Id: {identifier:?} PropertyIndex: {property_index} GuidIndex: {guid_index:?}");
+        // println!(
+        //     "        {:02X} {:02X} {:02X} {:02X}",
+        //     data_slice[0], data_slice[1], data_slice[2], data_slice[3]
+        // );
+        // println!(
+        //     "        {:02X} {:02X} {:02X} {:02X}",
+        //     data_slice[4], data_slice[5], data_slice[6], data_slice[7]
+        // );
+        // std::io::stdout().flush().unwrap();
+        // if let GuidIndex::StreamIndex(index) = guid_index {
+        //     let guid = message.guid_stream.get(index as usize);
+        //     print!("        GUID: {:?}", guid);
+        // }
+        // std::io::stdout().flush().unwrap();
+        // println!();
+        // let stream_id = match identifier {
+        //     PropertyId::Number(n) => 0x1000 + ((n as u16) ^ (guid_index.as_num() << 1)) % 0x1F,
+        //     PropertyId::String(_s) => {
+        //         let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+        //         let mut digest = crc.digest();
+        //         digest.update(&data_slice[0..=3]);
+        //         let checksum = digest.finalize();
+        //         0x1000 + ((checksum as u16) ^ (guid_index.as_num() << 1 | 1)) % 0x1F
+        //     }
+        // };
+        // let hex_id: u32 = ((stream_id as u32) << 16) | 0x00000102;
+        // let stream_name = format!("__substg1.0_{:X}", hex_id);
+        // println!("        stream_name: {}", stream_name);
+        data_slice = &data_slice[16..];
+        if data_slice.is_empty() {
+            break;
+        }
+        n += 1;
+    }
+}
+
+fn parse_fixed_length_pv(data_slice: [u8; 8]) {
+    // let data = [data_slice[0], data_slice[1], data_slice[2], data_slice[3]];
+    // let _reserved = [data_slice[4], data_slice[5], data_slice[6], data_slice[7]];
 }
