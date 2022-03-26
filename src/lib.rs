@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
     convert::TryInto,
@@ -6,6 +7,7 @@ use std::{
     path::Path,
 };
 use uuid::Uuid;
+mod oxprops;
 
 /// Iterates up to 2048.
 struct AttachmentNameIter {
@@ -58,6 +60,7 @@ struct Message {
     guid_stream: GuidStream,
     subject: String,
     sender: String,
+    delivery_time: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
@@ -70,6 +73,7 @@ pub struct EmailMessage {
     pub sender: String,
     pub attachments: Vec<Attachment>,
     pub recipients: Vec<Recipient>,
+    pub delivery_time: DateTime<Utc>,
 }
 
 impl EmailMessage {
@@ -140,12 +144,31 @@ impl EmailMessage {
             };
             read(&buffer)?
         };
+        let properties = {
+            let mut stream = comp.open_stream("/__properties_version1.0")?;
+            let buffer = {
+                let mut buffer = Vec::new();
+                stream.read_to_end(&mut buffer)?;
+                buffer
+            };
+            parse_property_stream_top_level(&buffer)
+        };
+        let mut delivery_time = None;
+        for property in properties {
+            if property.property_id == 0x0E06 {
+                if let Some(PValue::PtypTime(time)) = property.value {
+                    delivery_time = Some(time);
+                }
+            }
+        }
+        let delivery_time = delivery_time.unwrap();
         Ok(Self {
             // hash,
             subject,
             sender,
             attachments,
             recipients,
+            delivery_time,
         })
     }
 }
@@ -509,29 +532,37 @@ mod tests {
             };
             read(&buffer).ok()
         };
-        // let creation_time = {
-        //     // let mut stream = comp.open_stream("/__substg1.0_3FFA001F")?;
-        //     let mut stream = comp.open_stream("/__properties_version1.0").unwrap();
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         stream.read_to_end(&mut buffer).unwrap();
-        //         buffer
-        //     };
-        //     buffer
-        //     // read(&buffer).unwrap()
-        // };
-        // panic!("creation_time: {:?}",String::from_utf8_lossy(&creation_time));
+        let properties = {
+            let mut stream = comp.open_stream("/__properties_version1.0").unwrap();
+            let buffer = {
+                let mut buffer = Vec::new();
+                stream.read_to_end(&mut buffer).unwrap();
+                buffer
+            };
+            parse_property_stream_top_level(&buffer)
+        };
+        let mut delivery_time = None;
+        for property in properties {
+            if property.property_id == 0x0E06 {
+                if let Some(PValue::PtypTime(time)) = property.value {
+                    delivery_time = Some(time);
+                }
+            }
+        }
+        let delivery_time = delivery_time.unwrap();
         let message = Message {
             string_stream,
             guid_stream,
             subject,
             sender,
+            delivery_time,
             // body,
         };
 
         // let root_entry = comp.root_entry();
         // // root_entry.
 
+        #[allow(clippy::needless_collect)]
         let streams: Vec<Entry> = comp.walk_storage("").unwrap().collect();
         for (i, s) in streams.into_iter().enumerate() {
             // Read in all the data from one of the streams in that compound file.
@@ -651,7 +682,7 @@ mod tests {
                 }
             } else if s.path().as_os_str() == "/__properties_version1.0" {
                 println!("other properties");
-                parse_property_stream_top_level(&message, &data);
+                parse_property_stream_top_level(&data);
             } else {
                 print!("Stream[{}]({})[{}]", i, data.len(), s.path().display());
                 if let Ok(recip0) = read(&data) {
@@ -666,6 +697,7 @@ mod tests {
         if let Some(body) = body {
             println!("Body: {}", body);
         }
+        println!("Delivery Time: {}", message.delivery_time);
 
         // // Append that data to the end of another stream in the same file.
         // {
@@ -679,6 +711,31 @@ mod tests {
         // comp2.create_storage("/spam/")?;
         // let mut stream = comp2.create_stream("/spam/eggs")?;
         // stream.write_all(&data)?;
+        let PUBLIC_STRINGS: Uuid = "00020329-0000-0000-C000-000000000046".parse().unwrap();
+        let COMMON: Uuid = "00062008-0000-0000-C000-000000000046".parse().unwrap();
+        let ADDRESS: Uuid = "00062004-0000-0000-C000-000000000046".parse().unwrap();
+        let HEADERS: Uuid = "00020386-0000-0000-C000-000000000046".parse().unwrap();
+        let APPOINTMENT: Uuid = "00062002-0000-0000-C000-000000000046".parse().unwrap();
+        let MEETING: Uuid = "6ED8DA90-450B-101B-98DA-00AA003F1305".parse().unwrap();
+        let LOG: Uuid = "0006200A-0000-0000-C000-000000000046".parse().unwrap();
+        let MESSAGING: Uuid = "41F28F13-83F4-4114-A584-EEDB5A6B0BFF".parse().unwrap();
+        let NOTE: Uuid = "0006200E-0000-0000-C000-000000000046".parse().unwrap();
+        let POST_RSS: Uuid = "00062041-0000-0000-C000-000000000046".parse().unwrap();
+        let TASK: Uuid = "00062003-0000-0000-C000-000000000046".parse().unwrap();
+        let UNIFIED_MESSAGING: Uuid = "4442858E-A9E3-4E80-B900-317A210CC15B".parse().unwrap();
+        let PS_MAPI: Uuid = "00020328-0000-0000-C000-000000000046".parse().unwrap();
+        let AIR_SYNC: Uuid = "71035549-0739-4DCB-9163-00F0580DBBDF".parse().unwrap();
+        let SHARING: Uuid = "00062040-0000-0000-C000-000000000046".parse().unwrap();
+        let XML_EXTR_ENTITIES: Uuid = "23239608-685D-4732-9C55-4C95CB4E8E33".parse().unwrap();
+        let ATTACHMENT: Uuid = "96357F7F-59E1-47D0-99A7-46515C183B54".parse().unwrap();
+        let CALENDAR_ASSISTANT: Uuid = "11000E07-B51B-40D6-AF21-CAA85EDAB1D0".parse().unwrap();
+        assert_eq!(
+            PUBLIC_STRINGS,
+            Uuid::from_bytes([
+                0x00, 0x02, 0x03, 0x29, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x46
+            ])
+        );
     }
 
     #[ignore]
@@ -773,7 +830,7 @@ fn parse_property(message: &Message, data_slice: &[u8]) {
 // PidTagSenderEmailAddress: 0x0C1F
 // PidTagClientSubmitTime: 0x0039
 
-fn parse_property_stream_top_level(message: &Message, data_slice: &[u8]) {
+fn parse_property_stream_top_level(data_slice: &[u8]) -> Vec<FixedLengthPropertyEntry> {
     let mut data_slice = data_slice;
     // Ignore the first 8 bytes as required by spec.
     let _reserved1 = &data_slice[0..8];
@@ -784,6 +841,7 @@ fn parse_property_stream_top_level(message: &Message, data_slice: &[u8]) {
     let _reserved2 = &data_slice[24..32];
     data_slice = &data_slice[32..];
     let mut n = 0;
+    let mut properties = Vec::new();
     loop {
         // let property_tag = &data_slice[0..4];
         let property_tag = u16::from_le_bytes([data_slice[0], data_slice[1]]);
@@ -791,14 +849,119 @@ fn parse_property_stream_top_level(message: &Message, data_slice: &[u8]) {
         let flags =
             u32::from_le_bytes([data_slice[4], data_slice[5], data_slice[6], data_slice[7]]);
         let value = &data_slice[8..16];
-        eprint!("property_id: 0x{:04X}", property_id);
-        eprint!(" property_tag: 0x{:04X}", property_tag);
-        eprint!(" flags: 0x{:08X}", flags);
-        eprint!(
-            " value: 0x{:02X}{:02X}{:02X}{:02X}",
-            value[3], value[2], value[1], value[0]
-        );
-        if property_tag == 0x040 {
+        let property = parse_fixed_length_property_entry([
+            data_slice[0],
+            data_slice[1],
+            data_slice[2],
+            data_slice[3],
+            data_slice[4],
+            data_slice[5],
+            data_slice[6],
+            data_slice[7],
+            data_slice[8],
+            data_slice[9],
+            data_slice[10],
+            data_slice[11],
+            data_slice[12],
+            data_slice[13],
+            data_slice[14],
+            data_slice[15],
+        ]);
+        properties.push(property);
+        data_slice = &data_slice[16..];
+        if data_slice.is_empty() {
+            break;
+        }
+        n += 1;
+    }
+    properties
+}
+
+bitflags::bitflags! {
+    struct Flags: u32 {
+        const PROPATTR_MANDATORY = 0x00000001;
+        const PROPATTR_READABLE = 0x00000002;
+        const PROPATTR_WRITABLE = 0x00000004;
+    }
+}
+
+pub struct FixedLengthPropertyEntry {
+    pub property_id: u16,
+    pub value: Option<PValue>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub enum PValue {
+    PtypInteger16(i16),
+    PtypInteger32(i32),
+    PtypFloating32(f32),
+    PtypFloating64(f64),
+    PtypCurrency(u64),
+    PtypFloatingTime,
+    PtypErrorCode,
+    PtypBoolean(bool),
+    PtypInteger64(i64),
+    PtypString,
+    PtypString8,
+    PtypTime(DateTime<Utc>),
+    PtypGuid,
+    PtypServerId,
+    PtypRestriction,
+    PtypRuleAction,
+    PtypBinary,
+    PtypMultipleInteger16,
+    PtypMultipleInteger32,
+    PtypMultipleFloating32,
+    PtypMultipleFloating64,
+    PtypMultipleCurrency,
+    PtypMultipleFloatingTime,
+    PtypMultipleInteger64,
+    PtypMultipleString,
+    PtypMultipleString8,
+    PtypMultipleTime,
+    PtypMultipleGuid,
+    PtypMultipleBinary,
+    PtypUnspecified,
+    PtypNull,
+    PtypObject,
+}
+
+fn parse_fixed_length_property_entry(data_slice: [u8; 16]) -> FixedLengthPropertyEntry {
+    let property_tag = PTag::from_bits(u16::from_le_bytes([data_slice[0], data_slice[1]]));
+    let property_id = u16::from_le_bytes([data_slice[2], data_slice[3]]);
+    let flags = Flags::from_bits(u32::from_le_bytes([
+        data_slice[4],
+        data_slice[5],
+        data_slice[6],
+        data_slice[7],
+    ]))
+    .unwrap();
+    let value = &data_slice[8..16];
+    let mut flags_string = String::with_capacity(3);
+    if flags.contains(Flags::PROPATTR_MANDATORY) {
+        flags_string.push('M');
+    } else {
+        flags_string.push(' ');
+    }
+    if flags.contains(Flags::PROPATTR_READABLE) {
+        flags_string.push('R');
+    } else {
+        flags_string.push(' ');
+    }
+    if flags.contains(Flags::PROPATTR_WRITABLE) {
+        flags_string.push('W');
+    } else {
+        flags_string.push(' ');
+    }
+    eprint!("property_id: 0x{:04X}", property_id);
+    eprint!(" property_tag: {:<24}", format!("{property_tag:?}"));
+    eprint!(" flags: {flags_string}");
+    eprint!(
+        " value: 0x{:02X}{:02X}{:02X}{:02X}",
+        value[3], value[2], value[1], value[0]
+    );
+    let value = match property_tag {
+        PTag::PtypTime => {
             // parse time
             let nano_100s = i64::from_le_bytes([
                 value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7],
@@ -811,73 +974,134 @@ fn parse_property_stream_top_level(message: &Message, data_slice: &[u8]) {
                     .and_hms_milli(0, 0, 0, 0)
                     .timestamp();
             let time_seconds = nano_100s / 10 / 1000 / 1000 - origin_seconds;
-
+            let time_nanoseconds = (nano_100s % (10_000_000)).abs() as u32;
             eprint!(" time seconds: {time_seconds} s");
-            // let time = chrono::NaiveDateTime::from_timestamp(time_seconds, 0);
-            // eprint!(" time: {time}");
+            eprint!(" time nanoseconds: {time_nanoseconds} ns");
+            let time = chrono::NaiveDateTime::from_timestamp(time_seconds, time_nanoseconds);
+            // Time is UTC as per MS-OXPROPS
+            let utc_time: DateTime<Utc> = chrono::DateTime::from_utc(time, chrono::Utc);
+            eprint!(" time: {time}");
+            Some(PValue::PtypTime(utc_time))
         }
-        eprintln!();
-
-        // let v = parse_fixed_length_pv(&value);
-        // let (property_index, guid_index, property_kind) =
-        //     parse_kind_index([data_slice[4], data_slice[5], data_slice[6], data_slice[7]]);
-
-        // let identifier = match property_kind {
-        //     PropertyKind::Numerical => PropertyId::Number(u32::from_le_bytes([
-        //         data_slice[0],
-        //         data_slice[1],
-        //         data_slice[2],
-        //         data_slice[3],
-        //     ])),
-        //     PropertyKind::String => {
-        //         let num = u32::from_le_bytes([
-        //             data_slice[0],
-        //             data_slice[1],
-        //             data_slice[2],
-        //             data_slice[3],
-        //         ]);
-        //         // println!("        String Index: {}", num);
-        //         PropertyId::String(message.string_stream.get(num as usize).unwrap())
-        //     }
-        // };
-        // println!("    PropertyEntry[{n}][{property_index}]: Id: {identifier:?} PropertyIndex: {property_index} GuidIndex: {guid_index:?}");
-        // println!(
-        //     "        {:02X} {:02X} {:02X} {:02X}",
-        //     data_slice[0], data_slice[1], data_slice[2], data_slice[3]
-        // );
-        // println!(
-        //     "        {:02X} {:02X} {:02X} {:02X}",
-        //     data_slice[4], data_slice[5], data_slice[6], data_slice[7]
-        // );
-        // std::io::stdout().flush().unwrap();
-        // if let GuidIndex::StreamIndex(index) = guid_index {
-        //     let guid = message.guid_stream.get(index as usize);
-        //     print!("        GUID: {:?}", guid);
-        // }
-        // std::io::stdout().flush().unwrap();
-        // println!();
-        // let stream_id = match identifier {
-        //     PropertyId::Number(n) => 0x1000 + ((n as u16) ^ (guid_index.as_num() << 1)) % 0x1F,
-        //     PropertyId::String(_s) => {
-        //         let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-        //         let mut digest = crc.digest();
-        //         digest.update(&data_slice[0..=3]);
-        //         let checksum = digest.finalize();
-        //         0x1000 + ((checksum as u16) ^ (guid_index.as_num() << 1 | 1)) % 0x1F
-        //     }
-        // };
-        // let hex_id: u32 = ((stream_id as u32) << 16) | 0x00000102;
-        // let stream_name = format!("__substg1.0_{:X}", hex_id);
-        // println!("        stream_name: {}", stream_name);
-        data_slice = &data_slice[16..];
-        if data_slice.is_empty() {
-            break;
-        }
-        n += 1;
-    }
+        _ => None,
+    };
+    eprintln!();
+    FixedLengthPropertyEntry { property_id, value }
 }
 
 fn parse_fixed_length_pv(data_slice: [u8; 8]) {
     // let data = [data_slice[0], data_slice[1], data_slice[2], data_slice[3]];
     // let _reserved = [data_slice[4], data_slice[5], data_slice[6], data_slice[7]];
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PTag {
+    PtypInteger16,
+    PtypInteger32,
+    PtypFloating32,
+    PtypFloating64,
+    PtypCurrency,
+    PtypFloatingTime,
+    PtypErrorCode,
+    PtypBoolean,
+    PtypInteger64,
+    PtypString,
+    PtypString8,
+    PtypTime,
+    PtypGuid,
+    PtypServerId,
+    PtypRestriction,
+    PtypRuleAction,
+    PtypBinary,
+    PtypMultipleInteger16,
+    PtypMultipleInteger32,
+    PtypMultipleFloating32,
+    PtypMultipleFloating64,
+    PtypMultipleCurrency,
+    PtypMultipleFloatingTime,
+    PtypMultipleInteger64,
+    PtypMultipleString,
+    PtypMultipleString8,
+    PtypMultipleTime,
+    PtypMultipleGuid,
+    PtypMultipleBinary,
+    PtypUnspecified,
+    PtypNull,
+    PtypObject,
+}
+
+impl PTag {
+    pub fn from_bits(bits: u16) -> Self {
+        match bits {
+            0x0002 => Self::PtypInteger16,
+            0x0003 => Self::PtypInteger32,
+            0x0004 => Self::PtypFloating32,
+            0x0005 => Self::PtypFloating64,
+            0x0006 => Self::PtypCurrency,
+            0x0007 => Self::PtypFloatingTime,
+            0x000A => Self::PtypErrorCode,
+            0x000B => Self::PtypBoolean,
+            0x0014 => Self::PtypInteger64,
+            0x001F => Self::PtypString,
+            0x001E => Self::PtypString8,
+            0x0040 => Self::PtypTime,
+            0x0048 => Self::PtypGuid,
+            0x00FB => Self::PtypServerId,
+            0x00FD => Self::PtypRestriction,
+            0x00FE => Self::PtypRuleAction,
+            0x0102 => Self::PtypBinary,
+            0x1002 => Self::PtypMultipleInteger16,
+            0x1003 => Self::PtypMultipleInteger32,
+            0x1004 => Self::PtypMultipleFloating32,
+            0x1005 => Self::PtypMultipleFloating64,
+            0x1006 => Self::PtypMultipleCurrency,
+            0x1007 => Self::PtypMultipleFloatingTime,
+            0x1014 => Self::PtypMultipleInteger64,
+            0x101F => Self::PtypMultipleString,
+            0x101E => Self::PtypMultipleString8,
+            0x1010 => Self::PtypMultipleTime,
+            0x1048 => Self::PtypMultipleGuid,
+            0x1102 => Self::PtypMultipleBinary,
+            0x0000 => Self::PtypUnspecified,
+            0x0001 => Self::PtypNull,
+            0x000D => Self::PtypObject,
+            _ => panic!("invalid ptag"),
+        }
+    }
+    pub fn to_bits(&self) -> u16 {
+        match self {
+            Self::PtypInteger16 => 0x0002,
+            Self::PtypInteger32 => 0x0003,
+            Self::PtypFloating32 => 0x0004,
+            Self::PtypFloating64 => 0x0005,
+            Self::PtypCurrency => 0x0006,
+            Self::PtypFloatingTime => 0x0007,
+            Self::PtypErrorCode => 0x000A,
+            Self::PtypBoolean => 0x000B,
+            Self::PtypInteger64 => 0x0014,
+            Self::PtypString => 0x001F,
+            Self::PtypString8 => 0x001E,
+            Self::PtypTime => 0x0040,
+            Self::PtypGuid => 0x0048,
+            Self::PtypServerId => 0x00FB,
+            Self::PtypRestriction => 0x00FD,
+            Self::PtypRuleAction => 0x00FE,
+            Self::PtypBinary => 0x0102,
+            Self::PtypMultipleInteger16 => 0x1002,
+            Self::PtypMultipleInteger32 => 0x1003,
+            Self::PtypMultipleFloating32 => 0x1004,
+            Self::PtypMultipleFloating64 => 0x1005,
+            Self::PtypMultipleCurrency => 0x1006,
+            Self::PtypMultipleFloatingTime => 0x1007,
+            Self::PtypMultipleInteger64 => 0x1014,
+            Self::PtypMultipleString => 0x101F,
+            Self::PtypMultipleString8 => 0x101E,
+            Self::PtypMultipleTime => 0x1010,
+            Self::PtypMultipleGuid => 0x1048,
+            Self::PtypMultipleBinary => 0x1102,
+            Self::PtypUnspecified => 0x0000,
+            Self::PtypNull => 0x0001,
+            Self::PtypObject => 0x000D,
+        }
+    }
 }
