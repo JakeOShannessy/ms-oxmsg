@@ -1,7 +1,9 @@
 #![allow(dead_code)]
+use attachments::Attachment;
+use cfb::Entry;
 use chrono::{DateTime, Utc};
-use core::panic;
 use oxprops::property_ids::{tags::Tag, Pid};
+use recipients::Recipient;
 use serde::{Deserialize, Serialize};
 use std::{
     convert::TryInto,
@@ -9,8 +11,9 @@ use std::{
     path::Path,
 };
 use uuid::Uuid;
-
-use crate::oxprops::property_sets::PropertySet;
+pub mod attachments;
+pub mod recipients;
+use crate::oxprops::{property_ids::lids::Lid, property_sets::PropertySet};
 mod oxprops;
 
 /// Iterates up to 2048.
@@ -59,7 +62,27 @@ impl Iterator for RecipientNameIter {
     }
 }
 
-pub struct RawMsg {}
+// The top level of the file represents the entire Message object. The numbers and types of storages
+// and streams present in a .msg file depend on the type of Message object, the number of Recipient
+// objects and Attachment objects it has, and the properties that are set on it.
+// The .msg File Format specifies the following top level structure. Under the top level are the following:
+pub struct RawMsg {
+    /// Exactly one Recipient object storage for each Recipient object of the Message object.
+    // recipients: Vec<RecipientStorage>,
+    /// Exactly one Attachment object storage for each Attachment object of the Message object.
+    // attachments: Vec<AttachmentStorage>,
+    /// Exactly one named property mapping storage.
+    named_property_mapping: NamedPropertyMapping,
+    // Exactly one property stream, and it MUST contain entries for all properties of the Message object.
+    property_stream: PropertyStream,
+    // Exactly one stream for each variable length property of the Message object. That stream MUST
+    // contain the value of that variable length property.
+    // Exactly one stream for each fixed length multiple-valued property of the Message object. That
+    // stream MUST contain all the values of that fixed length multiple-valued property.
+    // For each variable length multiple-valued property of the Message object, if there are N values,
+    // there MUST be N + 1 streams.
+    // other_streams: Vec<MsgStream>,
+}
 
 struct Message {
     string_stream: StringStream,
@@ -112,7 +135,7 @@ impl EmailMessage {
 
         for name in AttachmentNameIter::new() {
             if comp.exists(&name) {
-                match Attachment::from_cfb(&mut comp, name) {
+                match Attachment::from_cfb(&mut comp, name.as_str()) {
                     Ok(attachment) => attachments.push(attachment),
                     Err(err) => eprintln!("ERR[{}]: {:?}", path.as_ref().display(), err),
                 }
@@ -157,10 +180,10 @@ impl EmailMessage {
                 stream.read_to_end(&mut buffer)?;
                 buffer
             };
-            parse_property_stream_top_level(&buffer)
+            parse_property_stream_header_top_level(&buffer)
         };
         let mut delivery_time = None;
-        for property in properties {
+        for property in properties.properties.iter() {
             if property.property_id == Pid::Tag(Tag::MessageDeliveryTime) {
                 if let PValue::Time(time) = property.value {
                     delivery_time = Some(time);
@@ -201,98 +224,6 @@ impl StringStream {
     fn get(&self, index: usize) -> Result<String, &'static str> {
         let bytes = self.get_bytes(index);
         read(bytes)
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
-pub struct AttachmentData {
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
-pub struct Attachment {
-    pub cfb_name: String,
-    pub name: String,
-    pub data: Option<AttachmentData>,
-}
-
-impl Attachment {
-    fn from_cfb<F: Seek + Read>(
-        comp: &mut cfb::CompoundFile<F>,
-        cfb_name: String,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let name = {
-            let name_path = format!("{}\\__substg1.0_3001001F", cfb_name);
-            let mut name_stream = comp.open_stream(&name_path)?;
-            let buffer = {
-                let mut buffer = Vec::new();
-                name_stream.read_to_end(&mut buffer)?;
-                buffer
-            };
-            read(&buffer)?
-        };
-        let data = {
-            let name_path = format!("{}\\__substg1.0_37010102", cfb_name);
-            if let Ok(mut name_stream) = comp.open_stream(&name_path) {
-                let bytes = {
-                    let mut buffer = Vec::new();
-                    name_stream.read_to_end(&mut buffer)?;
-                    buffer
-                };
-                Some(AttachmentData { bytes })
-            } else {
-                None
-            }
-        };
-
-        Ok(Self {
-            cfb_name,
-            name,
-            data,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
-pub struct Recipient {
-    pub cfb_name: String,
-    pub address: String,
-    // data: Vec<u8>,
-}
-
-impl Recipient {
-    fn from_cfb<F: Seek + Read>(
-        comp: &mut cfb::CompoundFile<F>,
-        cfb_name: String,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        // TODO work out how to deal with properties.
-
-        // "/__recip_version1.0_#00000000\\__properties_version1.0"
-        let address = {
-            let name_path = format!("{}\\__substg1.0_39FE001F", cfb_name);
-            let mut name_stream = comp.open_stream(&name_path)?;
-            let buffer = {
-                let mut buffer = Vec::new();
-                name_stream.read_to_end(&mut buffer)?;
-                buffer
-            };
-            read(&buffer)?
-        };
-        // let data = {
-        //     let name_path = format!("{}\\__substg1.0_37010102", cfb_name);
-        //     let mut name_stream = comp.open_stream(&name_path)?;
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         name_stream.read_to_end(&mut buffer)?;
-        //         buffer
-        //     };
-        //     buffer
-        // };
-        Ok(Self {
-            cfb_name,
-            address,
-            // data,
-        })
     }
 }
 
@@ -369,6 +300,107 @@ impl GuidIndex {
     }
 }
 
+struct EntryStream {
+    buffer: Vec<u8>,
+}
+
+impl EntryStream {
+    fn new(buffer: Vec<u8>) -> Self {
+        Self { buffer }
+    }
+
+    fn get_bytes(&self, index: usize) -> Option<&[u8]> {
+        Some(self.buffer.get((index * 8)..(index * 8 + 8)).unwrap())
+    }
+
+    // fn get(&self, index: usize) -> PropertyEntry {
+    //     let bytes = self.get_bytes(index);
+    //     parse_entry(bytes)
+    // }
+}
+
+fn parse_entry(
+    string_stream: &StringStream,
+    guid_stream: &GuidStream,
+    data_slice: [u8; 8],
+) -> PropertyEntry {
+    let (property_index, guid_index, property_kind) =
+        parse_kind_index([data_slice[4], data_slice[5], data_slice[6], data_slice[7]]);
+
+    let identifier = match property_kind {
+        PropertyKind::Numerical => PropertyId::Number(u32::from_le_bytes([
+            data_slice[0],
+            data_slice[1],
+            data_slice[2],
+            data_slice[3],
+        ])),
+        PropertyKind::String => {
+            let num =
+                u32::from_le_bytes([data_slice[0], data_slice[1], data_slice[2], data_slice[3]]);
+            PropertyId::String(string_stream.get(num as usize).unwrap())
+        }
+    };
+    println!("    PropertyEntry[{property_index}]: Id: {identifier:?} PropertyIndex: {property_index} GuidIndex: {guid_index:?}");
+    println!(
+        "        {:02X} {:02X} {:02X} {:02X}",
+        data_slice[0], data_slice[1], data_slice[2], data_slice[3]
+    );
+    println!(
+        "        {:02X} {:02X} {:02X} {:02X}",
+        data_slice[4], data_slice[5], data_slice[6], data_slice[7]
+    );
+    std::io::stdout().flush().unwrap();
+    let property_set = match guid_index {
+        GuidIndex::PsMapi => PropertySet::PsMapi,
+        GuidIndex::PublicStrings => PropertySet::PublicStrings,
+        GuidIndex::StreamIndex(index) => {
+            let guid = guid_stream.get(index as usize);
+            PropertySet::from_uuid(guid)
+        }
+    };
+    print!("        PropertySet: {:?}", property_set);
+    std::io::stdout().flush().unwrap();
+    println!();
+    let stream_id = match identifier {
+        PropertyId::Number(n) => 0x1000 + ((n as u16) ^ (guid_index.as_num() << 1)) % 0x1F,
+        PropertyId::String(_s) => {
+            let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+            let mut digest = crc.digest();
+            digest.update(&data_slice[0..=3]);
+            let checksum = digest.finalize();
+            0x1000 + ((checksum as u16) ^ (guid_index.as_num() << 1 | 1)) % 0x1F
+        }
+    };
+    let hex_id: u32 = ((stream_id as u32) << 16) | 0x00000102;
+    let stream_name = format!("__substg1.0_{:X}", hex_id);
+    println!("        stream_name: {}", stream_name);
+    PropertyEntry {
+        property_set,
+        property_index,
+        property_kind,
+        stream_name,
+    }
+}
+
+struct PropertyStream {
+    buffer: Vec<u8>,
+}
+
+impl PropertyStream {
+    fn new(buffer: Vec<u8>) -> Self {
+        Self { buffer }
+    }
+
+    // fn get_bytes(&self, index: usize) -> Option<&[u8]> {
+    //     Some(self.buffer.get((index * 8)..(index * 8 + 8)).unwrap())
+    // }
+
+    // fn get(&self, index: usize) -> Uuid {
+    //     let bytes = self.get_bytes(index);
+    //     parse_guid(bytes)
+    // }
+}
+
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 enum PropertyKind {
     Numerical,
@@ -423,7 +455,7 @@ pub struct PropertyMapping {
     // property_kind: PropertyKind,
     property_name: PropertyMappingIdentifier,
     property_id: u16,
-    stream_name: String,
+    // stream_name: String,
 }
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
@@ -432,12 +464,14 @@ pub enum PropertyMappingIdentifier {
     String([u8; 4]),
 }
 
+pub struct NamedPropertyMapping {
+    string_stream: StringStream,
+    guid_stream: GuidStream,
+    entry_stream: EntryStream,
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::oxprops::{
-        property_ids::{self, lids::Lid},
-        property_sets::PropertySet,
-    };
 
     use super::*;
     use cfb::Entry;
@@ -450,11 +484,11 @@ mod tests {
 
     #[test]
     fn read_to_cfb() {
-        use std::io::{Read, Write};
+        use std::io::Read;
         // We will read the whole email into memory for safety. By reading the
         // whole thing into memory, we know that the library can't make any
         // modifications to it.
-        let mut file = std::fs::File::open("test-guid.msg").unwrap();
+        let mut file = std::fs::File::open("private-test-no-recipients.msg").unwrap();
         // Read that file into a buffer.
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
@@ -464,220 +498,143 @@ mod tests {
             println!("entry[{}]: {:?}", e.is_storage(), e.path());
         }
 
-        // let string_stream = {
-        //     let mut stream = comp
-        //         .open_stream("/__nameid_version1.0\\__substg1.0_00040102")
-        //         .unwrap();
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         stream.read_to_end(&mut buffer).unwrap();
-        //         buffer
-        //     };
-        //     StringStream { buffer }
-        // };
-        // let guid_stream = {
-        //     let mut stream = comp
-        //         .open_stream("/__nameid_version1.0\\__substg1.0_00020102")
-        //         .unwrap();
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         stream.read_to_end(&mut buffer).unwrap();
-        //         buffer
-        //     };
-        //     GuidStream { buffer }
-        // };
-        // let subject = {
-        //     let mut stream = comp.open_stream("/__substg1.0_0037001F").unwrap();
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         stream.read_to_end(&mut buffer).unwrap();
-        //         buffer
-        //     };
-        //     read(&buffer).unwrap()
-        // };
-        // let sender = {
-        //     // let mut stream = comp.open_stream("/__substg1.0_3FFA001F")?;
-        //     let mut stream = comp.open_stream("/__substg1.0_0C1F001F").unwrap();
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         stream.read_to_end(&mut buffer).unwrap();
-        //         buffer
-        //     };
-        //     read(&buffer).unwrap()
-        // };
-        // let body = {
-        //     // let mut stream = comp.open_stream("/__substg1.0_3FFA001F")?;
-        //     let mut stream = comp.open_stream("/__substg1.0_1000001F").unwrap();
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         stream.read_to_end(&mut buffer).unwrap();
-        //         buffer
-        //     };
-        //     read(&buffer).ok()
-        // };
-        // let properties = {
-        //     let mut stream = comp.open_stream("/__properties_version1.0").unwrap();
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         stream.read_to_end(&mut buffer).unwrap();
-        //         buffer
-        //     };
-        //     parse_property_stream_top_level(&buffer)
-        // };
-        // let mut delivery_time = None;
-        // for property in properties {
-        //     if property.property_id == Pid::Tag(Tag::MessageDeliveryTime) {
-        //         if let PValue::Time(time) = property.value {
-        //             delivery_time = Some(time);
-        //         }
-        //     }
-        //     if let PValue::Time(time) = property.value {
-        //         println!("{:?}: {time}", property.property_id);
-        //     }
-        // }
-        // let delivery_time = delivery_time.unwrap();
-        // let message = Message {
-        //     string_stream,
-        //     guid_stream,
-        //     subject,
-        //     sender,
-        //     delivery_time,
-        // };
-        // println!("Subject: {}", message.subject);
-        // println!("Sender: {}", message.sender);
-        // if let Some(body) = body {
-        //     println!("Body: {}", body);
-        // }
-        // println!("Delivery Time: {}", message.delivery_time);
-        let mut string_stream = None;
-        let mut guid_stream = None;
-        let mut raw_entry_stream = Vec::new();
+        let named_property_mapping = parse_named_property_mapping(&mut comp);
+        let property_mappings: Vec<PropertyMapping> =
+            parse_property_mappings(&named_property_mapping, &mut comp);
+        let property_stream = parse_property_stream_top_level(&mut comp, "/");
 
-        let mut entries = Vec::new();
-        let mut property_mappings = Vec::new();
-        // let string_stream = {
-        //     let mut stream = comp
-        //         .open_stream("/__nameid_version1.0\\__substg1.0_00040102")
-        //         .unwrap();
-        //     let buffer = {
-        //         let mut buffer = Vec::new();
-        //         stream.read_to_end(&mut buffer).unwrap();
-        //         buffer
-        //     };
-        //     StringStream { buffer }
-        // };
-
+        let mut attachments = Vec::new();
         #[allow(clippy::needless_collect)]
-        let streams: Vec<Entry> = comp.walk().collect();
+        let streams: Vec<Entry> = comp.read_root_storage().collect();
+        for (i, s) in streams.into_iter().enumerate() {
+            println!("{}", s.path().display());
+            // assert!(!s.is_storage());
 
-        if let Ok(mut stream) = comp.open_stream("/__nameid_version1.0\\__substg1.0_00020102") {
-            let data = {
-                let mut buffer = Vec::new();
-                stream.read_to_end(&mut buffer).unwrap();
-                buffer
-            };
-            let len = data.len();
-            println!("GuidStream, len = {len}");
-            guid_stream = Some(GuidStream {
-                buffer: data.clone(),
-            });
-            let mut data_slice = data.as_slice();
-            let mut n = 0;
-            loop {
-                if data_slice.is_empty() {
-                    break;
-                }
-                let guid: Uuid = parse_guid(data_slice);
-                println!("    GUID[{}]: {}", n, guid);
-                data_slice = &data_slice[16..];
-                n += 1;
-            }
-        }
-
-        if let Ok(mut stream) = comp.open_stream("/__nameid_version1.0\\__substg1.0_00040102") {
-            let data = {
-                let mut buffer = Vec::new();
-                stream.read_to_end(&mut buffer).unwrap();
-                buffer
-            };
-            string_stream = Some(StringStream {
-                buffer: data.clone(),
-            });
-            let len = data.len();
-            println!("StringStream, len = {len}");
-            let mut data_slice = data.as_slice();
-            let mut n = 0;
-            loop {
-                if data_slice.is_empty() {
-                    break;
-                }
-                let length = u32::from_le_bytes([
-                    data_slice[0],
-                    data_slice[1],
-                    data_slice[2],
-                    data_slice[3],
-                ]) as usize;
-                if length > data_slice.len() {
-                    // data_slice = &data_slice[1..];
-                    // continue;
-                    break;
-                }
-                data_slice = &data_slice[4..];
-                print!("    StringEntry[{}]({})", n, length);
-                std::io::stdout().flush().unwrap();
-                if let Ok(recip0) = read(&data_slice[0..length]) {
+            if s.name() == "__nameid_version1.0" || s.name() == "__properties_version1.0" {
+                // These streams have already been read.
+                println!("  Stream already parsed");
+            } else if s.is_stream() {
+                // Read in all the data from one of the streams in that compound file.
+                let data = {
+                    let mut stream = if let Ok(s) = comp.open_stream(s.path()) {
+                        s
+                    } else {
+                        continue;
+                    };
+                    let mut buffer = Vec::new();
+                    stream.read_to_end(&mut buffer).unwrap();
+                    buffer
+                };
+                print!("  Stream[{}]({})[{}]", i, data.len(), s.path().display());
+                if let Ok(recip0) = read(&data) {
                     print!(": {}", recip0);
                 }
                 println!();
-                let next_offset = length + length % 4;
-                // println!("next_offset: {}", next_offset);
-                if next_offset > data_slice.len() {
-                    break;
-                }
-                data_slice = &data_slice[next_offset..];
-                n += 1;
+            } else if s.name().starts_with("__attach_version1.0_") {
+                attachments.push(Attachment::from_cfb(&mut comp, s.name()));
+            } else if s.name().starts_with("__recip_version1.0_") {
+                todo!("recip")
             }
         }
+    }
 
-        if let Ok(mut stream) = comp.open_stream("/__nameid_version1.0\\__substg1.0_00030102") {
-            let data = {
-                let mut buffer = Vec::new();
-                stream.read_to_end(&mut buffer).unwrap();
-                buffer
-            };
-            raw_entry_stream = data.clone();
-            let len = data.len();
-            println!("EntryStream, len = {len}");
-            entries = parse_properties(
-                string_stream.as_ref().unwrap(),
-                guid_stream.as_ref().unwrap(),
-                data.as_slice(),
-            );
+    #[ignore]
+    #[test]
+    fn attach_name_iter() {
+        let iter = AttachmentNameIter::new();
+        for s in iter {
+            println!("{}", s);
         }
+    }
+}
 
-        for (i, s) in streams.into_iter().enumerate() {
-            // Read in all the data from one of the streams in that compound file.
-            let data = {
-                let mut stream = if let Ok(s) = comp.open_stream(s.path()) {
-                    s
-                } else {
-                    continue;
-                };
-                let mut buffer = Vec::new();
-                stream.read_to_end(&mut buffer).unwrap();
-                buffer
-            };
-            println!("{}", s.path().display());
-            if s.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00020102"
-                || s.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00030102"
-                || s.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00040102"
+fn parse_property_stream_top_level<F: Seek + Read>(
+    comp: &mut cfb::CompoundFile<F>,
+    storage_path: &str,
+) -> PropertyStream {
+    // Read in all the data from one of the streams in that compound file.
+    let properties_path = format!("{storage_path}__properties_version1.0");
+    let data = {
+        let mut stream = if let Ok(s) = comp.open_stream(&properties_path) {
+            s
+        } else {
+            panic!("no proprties stream")
+        };
+        let mut buffer = Vec::new();
+        stream.read_to_end(&mut buffer).unwrap();
+        buffer
+    };
+    let property_stream = PropertyStream::new(data.clone());
+    // Everything after this is pre-parsing.
+    println!("  other properties");
+    let properties = parse_property_stream_header_top_level(&data);
+    for property in properties.properties.iter() {
+        println!(
+            "    0x{:04X} {property:?}",
+            property.property_id.to_u16().unwrap()
+        );
+    }
+    property_stream
+}
+
+fn parse_property_stream_other<F: Seek + Read>(
+    comp: &mut cfb::CompoundFile<F>,
+    storage_path: &str,
+) -> PropertyStream {
+    // Read in all the data from one of the streams in that compound file.
+    let properties_path = format!("{storage_path}__properties_version1.0");
+    let data = {
+        let mut stream = if let Ok(s) = comp.open_stream(&properties_path) {
+            s
+        } else {
+            panic!("no proprties stream")
+        };
+        let mut buffer = Vec::new();
+        stream.read_to_end(&mut buffer).unwrap();
+        buffer
+    };
+    let property_stream = PropertyStream::new(data.clone());
+    // Everything after this is pre-parsing.
+    println!("  other properties");
+    let properties = parse_property_stream_header_other(&data);
+    for property in properties.properties.iter() {
+        println!(
+            "    0x{:04X} {property:?}",
+            property.property_id.to_u16().unwrap()
+        );
+    }
+    property_stream
+}
+
+fn parse_property_mappings(
+    named_property_mapping: &NamedPropertyMapping,
+    comp: &mut cfb::CompoundFile<std::io::Cursor<&Vec<u8>>>,
+) -> Vec<PropertyMapping> {
+    let mut property_mappings = Vec::new();
+    if let Ok(entries) = comp.read_storage("/__nameid_version1.0") {
+        let entries: Vec<Entry> = entries.collect();
+        for entry in entries {
+            println!("{}", entry.path().display());
+            if entry.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00020102"
+                || entry.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00030102"
+                || entry.path().as_os_str() == "/__nameid_version1.0\\__substg1.0_00040102"
             {
-                // These streams have already been read.
-                println!("  Stream already parsed");
-            } else if s.path().starts_with("/__nameid_version1.0") {
+                continue;
+            } else if entry.is_stream() {
+                // Read in all the data from one of the streams in that compound file.
+                let data = {
+                    let mut stream = if let Ok(s) = comp.open_stream(entry.path()) {
+                        s
+                    } else {
+                        continue;
+                    };
+                    let mut buffer = Vec::new();
+                    stream.read_to_end(&mut buffer).unwrap();
+                    buffer
+                };
                 // These are the property mappings (exlcuding the 3 streams already deal with)
                 let len = data.len();
-                let name = s.name();
+                let name = entry.name();
                 // println!("named property mapping (len = {len}): {name} - {identifier:?} - {index_kind:?}");
                 println!("  NamedPropertyMapping (len = {len}): {name}");
                 let mut data_slice = data.as_slice();
@@ -696,7 +653,7 @@ mod tests {
                         GuidIndex::PsMapi => PropertySet::PsMapi,
                         GuidIndex::PublicStrings => PropertySet::PublicStrings,
                         GuidIndex::StreamIndex(index) => {
-                            let guid = guid_stream.as_ref().unwrap().get(index as usize);
+                            let guid = named_property_mapping.guid_stream.get(index as usize);
                             PropertySet::from_uuid(guid)
                         }
                     };
@@ -736,34 +693,26 @@ mod tests {
                             format!("crc: 0x{num:08X}")
                         }
                     };
-                    // println!(
-                    //     "    [{n}]: {id_string} property_index: {:?}",
-                    //     property_index,
-                    // );
                     let stream_id = match identifier {
                         PropertyMappingIdentifier::Number(n) => {
                             0x1000 + ((n as u16) ^ (guid_index.as_num() << 1)) % 0x1F
                         }
-                        PropertyMappingIdentifier::String(crc) => {
-                            let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-                            let mut digest = crc.digest();
-                            digest.update(&data_slice[0..=3]);
-                            let checksum = digest.finalize();
-                            0x1000 + ((checksum as u16) ^ (guid_index.as_num() << 1 | 1)) % 0x1F
+                        PropertyMappingIdentifier::String(crc_data) => {
+                            let checksum = u32::from_le_bytes(crc_data);
+                            0x1000
+                                + ((((checksum) ^ ((guid_index.as_num() as u32) << 1 | 1)) % 0x1F)
+                                    as u16)
                         }
                     };
                     let hex_id: u32 = ((stream_id as u32) << 16) | 0x00000102;
+                    println!("    stream_id: {stream_id:04X}");
                     let stream_name = format!("__substg1.0_{:X}", hex_id);
                     let property_id = 0x8000 + property_index;
                     let property_name = identifier;
-                    // assert_eq!(stream_name,format!("{}",s.path().display())[21..]);
                     let property_mapping = PropertyMapping {
                         property_set,
-                        // property_index,
-                        // property_kind,
                         property_name,
                         property_id,
-                        stream_name,
                     };
                     let name_string = match property_name {
                         PropertyMappingIdentifier::Number(n) => {
@@ -781,11 +730,13 @@ mod tests {
                             println!("    LID: {lid:?}");
                         }
                     }
-                    if let Some(entry_data) = raw_entry_stream.get(entry_offset..(entry_offset + 8))
+                    if let Some(entry_data) = named_property_mapping
+                        .entry_stream
+                        .get_bytes(property_index as usize)
                     {
                         parse_entry(
-                            string_stream.as_ref().unwrap(),
-                            guid_stream.as_ref().unwrap(),
+                            &named_property_mapping.string_stream,
+                            &named_property_mapping.guid_stream,
                             [
                                 entry_data[0],
                                 entry_data[1],
@@ -802,41 +753,115 @@ mod tests {
                     property_mappings.push(property_mapping);
                     data_slice = &data_slice[8..];
                     n += 1;
+                    assert_eq!(stream_name, format!("{}", entry.path().display())[21..]);
                 }
-            } else if s.path().as_os_str() == "/__attach_version1.0_#00000000\\__substg1.0_3001001F"
-            {
-                print!("  Stream[{}]({})[{}]", i, data.len(), s.path().display());
-                if let Ok(recip0) = read(&data) {
-                    print!(": ATTACHMENT: {}", recip0);
-                }
-                println!();
-            } else if s.path().as_os_str() == "/__properties_version1.0" {
-                println!("  other properties");
-                let properties = parse_property_stream_top_level(&data);
-                for property in properties {
-                    println!(
-                        "    0x{:04X} {property:?}",
-                        property.property_id.to_u16().unwrap()
-                    );
-                }
-            } else {
-                print!("  Stream[{}]({})[{}]", i, data.len(), s.path().display());
-                if let Ok(recip0) = read(&data) {
-                    print!(": {}", recip0);
-                }
-                println!();
             }
-            // s.
         }
     }
+    property_mappings
+}
 
-    #[ignore]
-    #[test]
-    fn attach_name_iter() {
-        let iter = AttachmentNameIter::new();
-        for s in iter {
-            println!("{}", s);
+fn parse_named_property_mapping(
+    comp: &mut cfb::CompoundFile<std::io::Cursor<&Vec<u8>>>,
+) -> NamedPropertyMapping {
+    let guid_stream =
+        if let Ok(mut stream) = comp.open_stream("/__nameid_version1.0\\__substg1.0_00020102") {
+            let data = {
+                let mut buffer = Vec::new();
+                stream.read_to_end(&mut buffer).unwrap();
+                buffer
+            };
+            let len = data.len();
+            println!("GuidStream, len = {len}");
+            let guid_stream = GuidStream {
+                buffer: data.clone(),
+            };
+            // Everything after this is pre-parsing
+            let mut data_slice = data.as_slice();
+            let mut n = 0;
+            loop {
+                if data_slice.is_empty() {
+                    break;
+                }
+                let guid: Uuid = parse_guid(data_slice);
+                println!("    GUID[{}]: {}", n, guid);
+                data_slice = &data_slice[16..];
+                n += 1;
+            }
+            guid_stream
+        } else {
+            panic!("no guid stream")
+        };
+
+    let string_stream = if let Ok(mut stream) =
+        comp.open_stream("/__nameid_version1.0\\__substg1.0_00040102")
+    {
+        let data = {
+            let mut buffer = Vec::new();
+            stream.read_to_end(&mut buffer).unwrap();
+            buffer
+        };
+        let string_stream = StringStream {
+            buffer: data.clone(),
+        };
+        // Everything after this is pre-parsing
+        let len = data.len();
+        println!("StringStream, len = {len}");
+        let mut data_slice = data.as_slice();
+        let mut n = 0;
+        loop {
+            if data_slice.is_empty() {
+                break;
+            }
+            let length =
+                u32::from_le_bytes([data_slice[0], data_slice[1], data_slice[2], data_slice[3]])
+                    as usize;
+            if length > data_slice.len() {
+                // data_slice = &data_slice[1..];
+                // continue;
+                break;
+            }
+            data_slice = &data_slice[4..];
+            print!("    StringEntry[{}]({})", n, length);
+            std::io::stdout().flush().unwrap();
+            if let Ok(recip0) = read(&data_slice[0..length]) {
+                print!(": {}", recip0);
+            }
+            println!();
+            let next_offset = length + length % 4;
+            // println!("next_offset: {}", next_offset);
+            if next_offset > data_slice.len() {
+                break;
+            }
+            data_slice = &data_slice[next_offset..];
+            n += 1;
         }
+        string_stream
+    } else {
+        panic!("no string stream")
+    };
+
+    let entry_stream =
+        if let Ok(mut stream) = comp.open_stream("/__nameid_version1.0\\__substg1.0_00030102") {
+            let data = {
+                let mut buffer = Vec::new();
+                stream.read_to_end(&mut buffer).unwrap();
+                buffer
+            };
+            let entry_stream = EntryStream::new(data.clone());
+            // Everything after this is pre-parsing
+            let len = data.len();
+            println!("EntryStream, len = {len}");
+            parse_properties(&string_stream, &guid_stream, data.as_slice());
+            entry_stream
+        } else {
+            panic!("no entry stream")
+        };
+
+    NamedPropertyMapping {
+        string_stream,
+        guid_stream,
+        entry_stream,
     }
 }
 
@@ -897,71 +922,6 @@ fn parse_properties(
     }
     properties
 }
-
-fn parse_entry(
-    string_stream: &StringStream,
-    guid_stream: &GuidStream,
-    data_slice: [u8; 8],
-) -> PropertyEntry {
-    let (property_index, guid_index, property_kind) =
-        parse_kind_index([data_slice[4], data_slice[5], data_slice[6], data_slice[7]]);
-
-    let identifier = match property_kind {
-        PropertyKind::Numerical => PropertyId::Number(u32::from_le_bytes([
-            data_slice[0],
-            data_slice[1],
-            data_slice[2],
-            data_slice[3],
-        ])),
-        PropertyKind::String => {
-            let num =
-                u32::from_le_bytes([data_slice[0], data_slice[1], data_slice[2], data_slice[3]]);
-            PropertyId::String(string_stream.get(num as usize).unwrap())
-        }
-    };
-    println!("    PropertyEntry[{property_index}]: Id: {identifier:?} PropertyIndex: {property_index} GuidIndex: {guid_index:?}");
-    println!(
-        "        {:02X} {:02X} {:02X} {:02X}",
-        data_slice[0], data_slice[1], data_slice[2], data_slice[3]
-    );
-    println!(
-        "        {:02X} {:02X} {:02X} {:02X}",
-        data_slice[4], data_slice[5], data_slice[6], data_slice[7]
-    );
-    std::io::stdout().flush().unwrap();
-    let property_set = match guid_index {
-        GuidIndex::PsMapi => PropertySet::PsMapi,
-        GuidIndex::PublicStrings => PropertySet::PublicStrings,
-        GuidIndex::StreamIndex(index) => {
-            let guid = guid_stream.get(index as usize);
-            let property_set = PropertySet::from_uuid(guid);
-            print!("        PropertySet: {:?}", property_set);
-            property_set
-        }
-    };
-    std::io::stdout().flush().unwrap();
-    println!();
-    let stream_id = match identifier {
-        PropertyId::Number(n) => 0x1000 + ((n as u16) ^ (guid_index.as_num() << 1)) % 0x1F,
-        PropertyId::String(_s) => {
-            let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-            let mut digest = crc.digest();
-            digest.update(&data_slice[0..=3]);
-            let checksum = digest.finalize();
-            0x1000 + ((checksum as u16) ^ (guid_index.as_num() << 1 | 1)) % 0x1F
-        }
-    };
-    let hex_id: u32 = ((stream_id as u32) << 16) | 0x00000102;
-    let stream_name = format!("__substg1.0_{:X}", hex_id);
-    println!("        stream_name: {}", stream_name);
-    PropertyEntry {
-        property_set,
-        property_index,
-        property_kind,
-        stream_name,
-    }
-}
-
 // pub fn id_to_stream_id(guid_index:GuidIndex, identifier:PropertyId) {
 //     let stream_id = match identifier {
 //         PropertyId::Number(n) => 0x1000 + ((n as u16) ^ (guid_index.as_num() << 1)) % 0x1F,
@@ -984,14 +944,29 @@ fn parse_entry(
 // PidTagSenderEmailAddress: 0x0C1F
 // PidTagClientSubmitTime: 0x0039
 
-fn parse_property_stream_top_level(data_slice: &[u8]) -> Vec<FixedLengthPropertyEntry> {
+#[derive(Clone, Debug)]
+pub struct TopProperties {
+    next_recipient_id: u32,
+    next_attachment_id: u32,
+    recipient_count: u32,
+    attachment_count: u32,
+    properties: Vec<FixedLengthPropertyEntry>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Properties {
+    properties: Vec<FixedLengthPropertyEntry>,
+}
+
+fn parse_property_stream_header_top_level(data_slice: &[u8]) -> TopProperties {
     let mut data_slice = data_slice;
     // Ignore the first 8 bytes as required by spec.
     let _reserved1 = &data_slice[0..8];
-    let next_recipient_id = &data_slice[8..12];
-    let next_attachment_id = &data_slice[12..16];
-    let recipient_count = &data_slice[16..20];
-    let attachment_count = &data_slice[20..24];
+    let next_recipient_id = u32::from_le_bytes(data_slice[8..12].try_into().unwrap());
+    let next_attachment_id = u32::from_le_bytes(data_slice[12..16].try_into().unwrap());
+    let recipient_count = u32::from_le_bytes(data_slice[16..20].try_into().unwrap());
+    let attachment_count = u32::from_le_bytes(data_slice[20..24].try_into().unwrap());
+    // Ignore the first last bytes as required by spec.
     let _reserved2 = &data_slice[24..32];
     data_slice = &data_slice[32..];
     let mut n = 0;
@@ -1022,7 +997,49 @@ fn parse_property_stream_top_level(data_slice: &[u8]) -> Vec<FixedLengthProperty
         }
         n += 1;
     }
-    properties
+    TopProperties {
+        next_recipient_id,
+        next_attachment_id,
+        recipient_count,
+        attachment_count,
+        properties,
+    }
+}
+
+fn parse_property_stream_header_other(data_slice: &[u8]) -> Properties {
+    let mut data_slice = data_slice;
+    // Ignore the first 8 bytes as required by spec.
+    let _reserved1 = &data_slice[0..8];
+    data_slice = &data_slice[8..];
+    let mut n = 0;
+    let mut properties = Vec::new();
+    loop {
+        let property = parse_fixed_length_property_entry([
+            data_slice[0],
+            data_slice[1],
+            data_slice[2],
+            data_slice[3],
+            data_slice[4],
+            data_slice[5],
+            data_slice[6],
+            data_slice[7],
+            data_slice[8],
+            data_slice[9],
+            data_slice[10],
+            data_slice[11],
+            data_slice[12],
+            data_slice[13],
+            data_slice[14],
+            data_slice[15],
+        ]);
+        properties.push(property);
+        data_slice = &data_slice[16..];
+        if data_slice.is_empty() {
+            break;
+        }
+        n += 1;
+    }
+    Properties { properties }
 }
 
 bitflags::bitflags! {
@@ -1285,7 +1302,8 @@ impl PType {
             0x0000 => Self::Unspecified,
             0x0001 => Self::Null,
             0x000D => Self::Object,
-            _ => panic!("invalid ptag"),
+            // TODO: not sure what to so here
+            n => Self::Null, //panic!("invalid PType: 0x{:04X}", n),
         }
     }
     pub fn to_bits(&self) -> u16 {
