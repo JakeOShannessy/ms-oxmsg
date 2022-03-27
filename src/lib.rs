@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use chrono::{DateTime, Utc};
+use core::panic;
 use oxprops::property_ids::{tags::Tag, Pid};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -453,7 +454,7 @@ mod tests {
         // We will read the whole email into memory for safety. By reading the
         // whole thing into memory, we know that the library can't make any
         // modifications to it.
-        let mut file = std::fs::File::open("test_email.msg").unwrap();
+        let mut file = std::fs::File::open("test-guid.msg").unwrap();
         // Read that file into a buffer.
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
@@ -813,7 +814,10 @@ mod tests {
                 println!("  other properties");
                 let properties = parse_property_stream_top_level(&data);
                 for property in properties {
-                    println!("    0x{:04X} {property:?}",property.property_id.to_u16().unwrap());
+                    println!(
+                        "    0x{:04X} {property:?}",
+                        property.property_id.to_u16().unwrap()
+                    );
                 }
             } else {
                 print!("  Stream[{}]({})[{}]", i, data.len(), s.path().display());
@@ -1051,7 +1055,7 @@ pub enum PValue {
     String(u32),
     String8(u32),
     Time(DateTime<Utc>),
-    Guid(Uuid),
+    Guid(u32),
     ServerId(u32),    // TODO: check
     Restriction(u32), // TODO: check
     RuleAction(u32),  // TODO: check
@@ -1121,7 +1125,8 @@ impl PValue {
                 let utc_time: DateTime<Utc> = chrono::DateTime::from_utc(time, chrono::Utc);
                 PValue::Time(utc_time)
             }
-            PType::Guid => panic!("guid"),
+            // Note, guid stores a length which will always be 16 bytes
+            PType::Guid => PValue::Guid(u32::from_le_bytes([data[0], data[1], data[2], data[3]])),
             PType::ServerId => {
                 PValue::ServerId(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
             }
