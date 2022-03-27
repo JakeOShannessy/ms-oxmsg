@@ -268,7 +268,7 @@ impl Recipient {
 
         // "/__recip_version1.0_#00000000\\__properties_version1.0"
         let address = {
-            let name_path = format!("{}\\__substg1.0_3003001F", cfb_name);
+            let name_path = format!("{}\\__substg1.0_39FE001F", cfb_name);
             let mut name_stream = comp.open_stream(&name_path)?;
             let buffer = {
                 let mut buffer = Vec::new();
@@ -1108,7 +1108,6 @@ impl PValue {
                 let nano_100s = i64::from_le_bytes([
                     data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                 ]);
-                eprint!(" time: {nano_100s}");
                 let origin_seconds = chrono::NaiveDate::from_ymd(1970, 1, 1)
                     .and_hms_milli(0, 0, 0, 0)
                     .timestamp()
@@ -1117,12 +1116,9 @@ impl PValue {
                         .timestamp();
                 let time_seconds = nano_100s / 10 / 1000 / 1000 - origin_seconds;
                 let time_nanoseconds = (nano_100s % (10_000_000)).abs() as u32;
-                eprint!(" time seconds: {time_seconds} s");
-                eprint!(" time nanoseconds: {time_nanoseconds} ns");
                 let time = chrono::NaiveDateTime::from_timestamp(time_seconds, time_nanoseconds);
                 // Time is UTC as per MS-OXPROPS
                 let utc_time: DateTime<Utc> = chrono::DateTime::from_utc(time, chrono::Utc);
-                eprint!(" time: {time}");
                 PValue::Time(utc_time)
             }
             PType::Guid => panic!("guid"),
@@ -1204,37 +1200,8 @@ fn parse_fixed_length_property_entry(data_slice: [u8; 16]) -> FixedLengthPropert
         data_slice[14],
         data_slice[15],
     ];
-    let mut flags_string = String::with_capacity(3);
-    if flags.contains(Flags::PROPATTR_MANDATORY) {
-        flags_string.push('M');
-    } else {
-        flags_string.push(' ');
-    }
-    if flags.contains(Flags::PROPATTR_READABLE) {
-        flags_string.push('R');
-    } else {
-        flags_string.push(' ');
-    }
-    if flags.contains(Flags::PROPATTR_WRITABLE) {
-        flags_string.push('W');
-    } else {
-        flags_string.push(' ');
-    }
-    eprint!(
-        "property_id: 0x{:04X}:{:<24}",
-        pid_u16,
-        format!("{property_id:?}")
-    );
-    eprint!(" property_tag: {:<24}", format!("{property_type:?}"));
-    eprint!(" flags: {flags_string}");
-    // eprint!(
-    //     " value: 0x{:02X}{:02X}{:02X}{:02X}",
-    //     value[3], value[2], value[1], value[0]
-    // );
     let value = PValue::from_bytes(property_type, value);
-    eprint!(" value: {value:?}",);
 
-    eprintln!();
     FixedLengthPropertyEntry {
         property_id,
         flags,
