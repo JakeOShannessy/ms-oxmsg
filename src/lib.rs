@@ -401,6 +401,25 @@ impl PropertyStream {
     // }
 }
 
+struct PropertyStreamCfb<F> {
+    buffer: cfb::CompoundFile<F>,
+}
+
+impl<F> PropertyStreamCfb<F> {
+    pub fn new(buffer: cfb::CompoundFile<F>) -> Self {
+        Self { buffer }
+    }
+
+    // fn get_bytes(&self, index: usize) -> Option<&[u8]> {
+    //     Some(self.buffer.get((index * 8)..(index * 8 + 8)).unwrap())
+    // }
+
+    // fn get(&self, index: usize) -> Uuid {
+    //     let bytes = self.get_bytes(index);
+    //     parse_guid(bytes)
+    // }
+}
+
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 enum PropertyKind {
     Numerical,
@@ -488,7 +507,7 @@ mod tests {
         // We will read the whole email into memory for safety. By reading the
         // whole thing into memory, we know that the library can't make any
         // modifications to it.
-        let mut file = std::fs::File::open("private-test-no-recipients.msg").unwrap();
+        let mut file = std::fs::File::open("problem1.msg").unwrap();
         // Read that file into a buffer.
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
@@ -533,9 +552,14 @@ mod tests {
             } else if s.name().starts_with("__attach_version1.0_") {
                 attachments.push(Attachment::from_cfb(&mut comp, s.name()));
             } else if s.name().starts_with("__recip_version1.0_") {
-                todo!("recip")
+                // todo!("recip")
             }
         }
+    }
+
+    #[test]
+    fn problem1() {
+        EmailMessage::from_file("problem1.msg");
     }
 
     #[ignore]
