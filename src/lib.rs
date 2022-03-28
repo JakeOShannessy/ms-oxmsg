@@ -167,7 +167,7 @@ impl EmailMessage {
                 }
             }
         }
-        let delivery_time = delivery_time.unwrap();
+        let delivery_time = delivery_time.ok_or("no delivery time")?;
         Ok(Self {
             // hash,
             subject,
