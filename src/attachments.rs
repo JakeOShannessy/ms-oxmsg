@@ -84,10 +84,10 @@ impl Attachment {
                     stream.read_to_end(&mut buffer).unwrap();
                     buffer
                 };
-                print!("  Stream[{}]({})[{}]", i, data.len(), s.path().display());
-                if let Ok(recip0) = read(&data) {
-                    print!(": {}", recip0);
-                }
+                // print!("  Stream[{}]({})[{}]", i, data.len(), s.path().display());
+                // if let Ok(recip0) = read(&data) {
+                //     print!(": {}", recip0);
+                // }
                 println!();
             }
         }
