@@ -3,7 +3,10 @@ use std::io::{Read, Seek};
 use cfb::Entry;
 use serde::{Deserialize, Serialize};
 
-use crate::read;
+use crate::{
+    oxprops::property_ids::{tags::Tag, Pid},
+    read, PValue,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct AttachmentData {
@@ -15,6 +18,7 @@ pub struct Attachment {
     pub cfb_name: String,
     pub name: String,
     pub data: Option<AttachmentData>,
+    pub hidden: bool,
 }
 
 impl Attachment {
@@ -24,7 +28,16 @@ impl Attachment {
         cfb_name: &str,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let properties_path = format!("/{cfb_name}\\");
-        let attachment_properties = crate::parse_property_stream_other(comp, &properties_path);
+        let properties =
+            crate::parse_property_stream_other(comp, &properties_path);
+        let mut hidden = false;
+        for property in properties.properties {
+            if property.property_id == Pid::Tag(Tag::AttachmentHidden) {
+                if let PValue::Boolean(b) = property.value {
+                    hidden = b;
+                }
+            }
+        }
         let name = {
             let name_path = format!("/{cfb_name}\\__substg1.0_3707001F");
             let mut name_stream = comp.open_stream(&name_path)?;
@@ -56,7 +69,7 @@ impl Attachment {
             println!("{}", s.path().display());
             // assert!(!s.is_storage());
 
-            if  s.name() == "__properties_version1.0" {
+            if s.name() == "__properties_version1.0" {
                 // These streams have already been read.
                 println!("  Stream already parsed");
             } else if s.is_stream() {
@@ -83,6 +96,7 @@ impl Attachment {
             cfb_name: cfb_name.to_string(),
             name,
             data,
+            hidden,
         })
     }
 }

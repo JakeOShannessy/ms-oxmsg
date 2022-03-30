@@ -507,7 +507,7 @@ mod tests {
         // We will read the whole email into memory for safety. By reading the
         // whole thing into memory, we know that the library can't make any
         // modifications to it.
-        let mut file = std::fs::File::open("problem1.msg").unwrap();
+        let mut file = std::fs::File::open("hidden.msg").unwrap();
         // Read that file into a buffer.
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
@@ -604,7 +604,7 @@ fn parse_property_stream_top_level<F: Seek + Read>(
 fn parse_property_stream_other<F: Seek + Read>(
     comp: &mut cfb::CompoundFile<F>,
     storage_path: &str,
-) -> PropertyStream {
+) -> Properties {
     // Read in all the data from one of the streams in that compound file.
     let properties_path = format!("{storage_path}__properties_version1.0");
     let data = {
@@ -617,9 +617,6 @@ fn parse_property_stream_other<F: Seek + Read>(
         stream.read_to_end(&mut buffer).unwrap();
         buffer
     };
-    let property_stream = PropertyStream::new(data.clone());
-    // Everything after this is pre-parsing.
-    println!("  other properties");
     let properties = parse_property_stream_header_other(&data);
     for property in properties.properties.iter() {
         println!(
@@ -627,7 +624,7 @@ fn parse_property_stream_other<F: Seek + Read>(
             property.property_id.to_u16().unwrap()
         );
     }
-    property_stream
+    properties
 }
 
 fn parse_property_mappings(
