@@ -66,12 +66,9 @@ impl Attachment {
         #[allow(clippy::needless_collect)]
         let streams: Vec<Entry> = comp.read_storage(&storage_path).unwrap().collect();
         for (i, s) in streams.into_iter().enumerate() {
-            println!("{}", s.path().display());
-            // assert!(!s.is_storage());
-
             if s.name() == "__properties_version1.0" {
                 // These streams have already been read.
-                println!("  Stream already parsed");
+                // println!("  Stream already parsed");
             } else if s.is_stream() {
                 // Read in all the data from one of the streams in that compound file.
                 let data = {
@@ -88,7 +85,7 @@ impl Attachment {
                 // if let Ok(recip0) = read(&data) {
                 //     print!(": {}", recip0);
                 // }
-                println!();
+                // println!();
             }
         }
 

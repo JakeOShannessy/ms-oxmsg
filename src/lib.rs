@@ -617,14 +617,7 @@ fn parse_property_stream_other<F: Seek + Read>(
         stream.read_to_end(&mut buffer).unwrap();
         buffer
     };
-    let properties = parse_property_stream_header_other(&data);
-    for property in properties.properties.iter() {
-        println!(
-            "    0x{:04X} {property:?}",
-            property.property_id.to_u16().unwrap()
-        );
-    }
-    properties
+    parse_property_stream_header_other(&data)
 }
 
 fn parse_property_mappings(
@@ -1324,7 +1317,7 @@ impl PType {
             0x0001 => Self::Null,
             0x000D => Self::Object,
             // TODO: not sure what to so here
-            n => Self::Null, //panic!("invalid PType: 0x{:04X}", n),
+            n => Self::Null,
         }
     }
     pub fn to_bits(&self) -> u16 {
