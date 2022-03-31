@@ -28,8 +28,7 @@ impl Attachment {
         cfb_name: &str,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let properties_path = format!("/{cfb_name}\\");
-        let properties =
-            crate::parse_property_stream_other(comp, &properties_path);
+        let properties = crate::parse_property_stream_other(comp, &properties_path);
         let mut hidden = false;
         for property in properties.properties {
             if property.property_id == Pid::Tag(Tag::AttachmentHidden) {
@@ -38,8 +37,23 @@ impl Attachment {
                 }
             }
         }
-        let name = {
+        let name1 = {
             let name_path = format!("/{cfb_name}\\__substg1.0_3707001F");
+            if let Ok(mut name_stream) = comp.open_stream(&name_path) {
+                let buffer = {
+                    let mut buffer = Vec::new();
+                    name_stream.read_to_end(&mut buffer)?;
+                    buffer
+                };
+                Some(read(&buffer)?)
+            } else {
+                None
+            }
+        };
+        let name = if let Some(name) = name1 {
+            name
+        } else {
+            let name_path = format!("/{cfb_name}\\__substg1.0_3001001F");
             let mut name_stream = comp.open_stream(&name_path)?;
             let buffer = {
                 let mut buffer = Vec::new();
@@ -48,6 +62,7 @@ impl Attachment {
             };
             read(&buffer)?
         };
+
         let data = {
             let name_path = format!("{cfb_name}\\__substg1.0_37010102");
             if let Ok(mut name_stream) = comp.open_stream(&name_path) {

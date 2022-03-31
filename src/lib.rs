@@ -507,7 +507,7 @@ mod tests {
         // We will read the whole email into memory for safety. By reading the
         // whole thing into memory, we know that the library can't make any
         // modifications to it.
-        let mut file = std::fs::File::open("hidden.msg").unwrap();
+        let mut file = std::fs::File::open("problem2.msg").unwrap();
         // Read that file into a buffer.
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
