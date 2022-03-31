@@ -507,7 +507,7 @@ mod tests {
         // We will read the whole email into memory for safety. By reading the
         // whole thing into memory, we know that the library can't make any
         // modifications to it.
-        let mut file = std::fs::File::open("problem2.msg").unwrap();
+        let mut file = std::fs::File::open("problem3.msg").unwrap();
         // Read that file into a buffer.
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
@@ -559,7 +559,12 @@ mod tests {
 
     #[test]
     fn problem1() {
-        EmailMessage::from_file("problem1.msg");
+        EmailMessage::from_file("problem1.msg").unwrap();
+    }
+
+    #[test]
+    fn problem3() {
+        EmailMessage::from_file("problem3.msg").unwrap();
     }
 
     #[ignore]
