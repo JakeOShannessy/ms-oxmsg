@@ -103,6 +103,8 @@ pub struct EmailMessage {
     pub attachments: Vec<Attachment>,
     pub recipients: Vec<Recipient>,
     pub delivery_time: DateTime<Utc>,
+    pub body: Option<String>,
+    // pub body_html: Option<String>,
 }
 
 impl EmailMessage {
@@ -183,6 +185,7 @@ impl EmailMessage {
             parse_property_stream_header_top_level(&buffer)
         };
         let mut delivery_time = None;
+        let mut body = None;
         for property in properties.properties.iter() {
             if property.property_id == Pid::Tag(Tag::MessageDeliveryTime) {
                 if let PValue::Time(time) = property.value {
@@ -194,7 +197,32 @@ impl EmailMessage {
                     delivery_time = Some(time);
                 }
             }
+            if property.property_id == Pid::Tag(Tag::Body) {
+                if let PValue::String(time) = property.value {
+                    body = Some(time);
+                }
+            }
         }
+        let body = {
+            // let mut stream = comp.open_stream("/__substg1.0_3FFA001F")?;
+            let mut stream = comp.open_stream("/__substg1.0_1000001F")?;
+            let buffer = {
+                let mut buffer = Vec::new();
+                stream.read_to_end(&mut buffer)?;
+                buffer
+            };
+            read(&buffer)?
+        };
+        // let body_html = {
+        //     // let mut stream = comp.open_stream("/__substg1.0_3FFA001F")?;
+        //     let mut stream = comp.open_stream("/__substg1.0_1013001F")?;
+        //     let buffer = {
+        //         let mut buffer = Vec::new();
+        //         stream.read_to_end(&mut buffer)?;
+        //         buffer
+        //     };
+        //     read(&buffer)?
+        // };
         let delivery_time = delivery_time.ok_or("no delivery time")?;
         Ok(Self {
             // hash,
@@ -203,6 +231,8 @@ impl EmailMessage {
             attachments,
             recipients,
             delivery_time,
+            body: Some(body),
+            // body_html: Some(body_html),
         })
     }
 }
@@ -564,7 +594,8 @@ mod tests {
 
     #[test]
     fn problem1() {
-        EmailMessage::from_file("problem1.msg").unwrap();
+        let msg = EmailMessage::from_file("problem1.msg").unwrap();
+        println!("{msg:#?}");
     }
 
     #[test]
@@ -579,6 +610,23 @@ mod tests {
         for s in iter {
             println!("{}", s);
         }
+    }
+
+    #[test]
+    fn iss_url() {
+        let msg = EmailMessage::from_file("iss_url.msg").unwrap();
+        let body = msg.body.unwrap();
+        let re = regex::Regex::new("https://docs.affinity-fire.com/i/(iss-\\w{13})").unwrap();
+        let caps = re.captures_iter(&body);
+        for cap in caps {
+            let iss: String = cap.get(1).unwrap().as_str().parse().unwrap();
+            println!("{iss}");
+        }
+
+        // assert_eq!("2010", &caps["year"]);
+        // assert_eq!("03", &caps["month"]);
+        // assert_eq!("14", &caps["day"]);
+        // println!("{body:#?}");
     }
 }
 
