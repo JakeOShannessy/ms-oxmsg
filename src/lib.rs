@@ -669,7 +669,7 @@ fn parse_property_stream_other<F: Seek + Read>(
         let mut stream = if let Ok(s) = comp.open_stream(&properties_path) {
             s
         } else {
-            panic!("no proprties stream")
+            panic!("no proprties stream at {}",properties_path)
         };
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).unwrap();
