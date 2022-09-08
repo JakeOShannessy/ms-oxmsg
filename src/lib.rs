@@ -137,10 +137,12 @@ impl EmailMessage {
 
         for name in AttachmentNameIter::new() {
             if comp.exists(&name) {
-                match Attachment::from_cfb(&mut comp, name.as_str()) {
-                    Ok(attachment) => attachments.push(attachment),
-                    Err(err) => eprintln!("ERR[{}]: {:?}", path.as_ref().display(), err),
-                }
+                // match Attachment::from_cfb(&mut comp, name.as_str()) {
+                //     Ok(attachment) => attachments.push(attachment),
+                //     Err(err) => eprintln!("ERR[{}]: {:?}", path.as_ref().display(), err),
+                // }
+                let attachment = Attachment::from_cfb(&mut comp, name.as_str()).unwrap();
+                attachments.push(attachment);
             } else {
                 break;
             }
@@ -602,6 +604,18 @@ mod tests {
     fn problem3() {
         EmailMessage::from_file("problem3.msg").unwrap();
     }
+
+    #[test]
+    fn problem6() {
+        EmailMessage::from_file("problem6.msg").unwrap();
+    }
+
+    #[test]
+    fn problem7() {
+        EmailMessage::from_file(r#"\\?\UNC\172.16.66.10\Data\03 Project Directory\2022\20797_First Floor Masterplan\Correspondence\2022-06-07_151205_Li Chen_RE  01-MZ-04.msg"#).unwrap();
+    }
+
+
 
     #[ignore]
     #[test]
