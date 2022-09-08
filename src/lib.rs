@@ -33,7 +33,7 @@ impl Iterator for AttachmentNameIter {
         if self.i >= 2048 {
             return None;
         }
-        let s = format!("/__attach_version1.0_#0000{:04X}", self.i);
+        let s = format!("__attach_version1.0_#0000{:04X}", self.i);
         self.i += 1;
         Some(s)
     }
@@ -137,12 +137,10 @@ impl EmailMessage {
 
         for name in AttachmentNameIter::new() {
             if comp.exists(&name) {
-                // match Attachment::from_cfb(&mut comp, name.as_str()) {
-                //     Ok(attachment) => attachments.push(attachment),
-                //     Err(err) => eprintln!("ERR[{}]: {:?}", path.as_ref().display(), err),
-                // }
-                let attachment = Attachment::from_cfb(&mut comp, name.as_str()).unwrap();
-                attachments.push(attachment);
+                match Attachment::from_cfb(&mut comp, name.as_str()) {
+                    Ok(attachment) => attachments.push(attachment),
+                    Err(err) => eprintln!("ERR[{}]: {:?}", path.as_ref().display(), err),
+                }
             } else {
                 break;
             }

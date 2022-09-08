@@ -27,7 +27,7 @@ impl Attachment {
         comp: &mut cfb::CompoundFile<F>,
         cfb_name: &str,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let properties_path = format!("{cfb_name}\\");
+        let properties_path = format!("/{cfb_name}\\");
         let properties = crate::parse_property_stream_other(comp, &properties_path);
         let mut hidden = false;
         for property in properties.properties {
