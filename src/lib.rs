@@ -124,13 +124,10 @@ impl EmailMessage {
         // Read that file into a buffer.
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
-        // let hash = {
-        //     let mut hasher = blake2::Blake2b::with_params(&[], &[], &[]);
-        //     hasher.update(&buffer);
-        //     let hash = hasher.finalize();
-        //     ObjectHash::Blake2b(hash.as_slice().try_into().unwrap())
-        // };
-        let cursor = std::io::Cursor::new(&buffer);
+        Self::from_bytes(&buffer)
+    }
+    pub fn from_bytes(buffer: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let cursor = std::io::Cursor::new(buffer);
         let mut comp = cfb::CompoundFile::open(cursor)?;
 
         let mut attachments = Vec::new();
@@ -139,7 +136,7 @@ impl EmailMessage {
             if comp.exists(&name) {
                 match Attachment::from_cfb(&mut comp, name.as_str()) {
                     Ok(attachment) => attachments.push(attachment),
-                    Err(err) => eprintln!("ERR[{}]: {:?}", path.as_ref().display(), err),
+                    Err(err) => eprintln!("ERR: {:?}", err),
                 }
             } else {
                 break;
@@ -681,7 +678,7 @@ fn parse_property_stream_other<F: Seek + Read>(
         let mut stream = if let Ok(s) = comp.open_stream(&properties_path) {
             s
         } else {
-            panic!("no proprties stream at {}",properties_path)
+            panic!("no proprties stream at {}", properties_path)
         };
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).unwrap();
