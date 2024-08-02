@@ -30,10 +30,12 @@ impl Attachment {
         let properties_path = format!("/{cfb_name}\\");
         let properties = crate::parse_property_stream_other(comp, &properties_path);
         let mut hidden = false;
-        for property in properties.properties {
-            if property.property_id == Pid::Tag(Tag::AttachmentHidden) {
-                if let PValue::Boolean(b) = property.value {
-                    hidden = b;
+        if let Some(properties) = properties {
+            for property in properties.properties {
+                if property.property_id == Pid::Tag(Tag::AttachmentHidden) {
+                    if let PValue::Boolean(b) = property.value {
+                        hidden = b;
+                    }
                 }
             }
         }

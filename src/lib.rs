@@ -607,10 +607,18 @@ mod tests {
 
     #[test]
     fn problem7() {
-        EmailMessage::from_file(r#"\\?\UNC\172.16.66.10\Data\03 Project Directory\2022\20797_First Floor Masterplan\Correspondence\2022-06-07_151205_Li Chen_RE  01-MZ-04.msg"#).unwrap();
+        let email = EmailMessage::from_file("problem7.msg").unwrap();
+        // let bytes = include_bytes!("../problem7.msg");
+        // let cursor = std::io::Cursor::new(bytes);
+        // let mut comp = cfb::CompoundFile::open(cursor).unwrap();
+        // for entry in comp.walk() {
+        //     eprintln!("Entry Path: {:?}", entry.path());
+        // }
+        for recipient in email.recipients {
+            println!("{recipient:?}")
+        }
+        panic!("end");
     }
-
-
 
     #[ignore]
     #[test]
@@ -671,7 +679,7 @@ fn parse_property_stream_top_level<F: Seek + Read>(
 fn parse_property_stream_other<F: Seek + Read>(
     comp: &mut cfb::CompoundFile<F>,
     storage_path: &str,
-) -> Properties {
+) -> Option<Properties> {
     // Read in all the data from one of the streams in that compound file.
     let properties_path = format!("{storage_path}__properties_version1.0");
     let data = {
@@ -1087,8 +1095,11 @@ fn parse_property_stream_header_top_level(data_slice: &[u8]) -> TopProperties {
     }
 }
 
-fn parse_property_stream_header_other(data_slice: &[u8]) -> Properties {
+fn parse_property_stream_header_other(data_slice: &[u8]) -> Option<Properties> {
     let mut data_slice = data_slice;
+    if data_slice.len() < 8 {
+        return None;
+    }
     // Ignore the first 8 bytes as required by spec.
     let _reserved1 = &data_slice[0..8];
     data_slice = &data_slice[8..];
@@ -1120,7 +1131,7 @@ fn parse_property_stream_header_other(data_slice: &[u8]) -> Properties {
         }
         n += 1;
     }
-    Properties { properties }
+    Some(Properties { properties })
 }
 
 bitflags::bitflags! {
